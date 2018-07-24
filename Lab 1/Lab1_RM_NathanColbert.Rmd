@@ -1,0 +1,112 @@
+---
+title: "Lab1_NathanColbert"
+author: "Nathan Colbert"
+date: "10/5/2017"
+output:
+  pdf_document: default
+  html_document:
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(plyr)
+library(tidyverse)
+library(ggplot2)
+```
+
+## Question 1
+
+In light of recent history, I chose to look at how Americans' views have changed on whether African American citizens should be expected to "work their way up" to overcome predjudice. Specifically, the respondents are asked: "Do you agree strongly (5), agree somewhat (4), neither agree nor disagree (3), disagree somewhat (2), or disagree strongly (1) with the following statement: Irish, Italians, Jewish and many other minorities overcame prejudice and worked their way up. Blacks should do the same without special favors." This data was not available with the data set given, so I retreived it from the GSS. I recoded the data in Excel before reading it in to make it more easily understandable. 
+
+```{r, include=FALSE, warning=FALSE}
+data <- read_csv("~/Downloads/Lab_1/Lab_1.csv", col_names = c("ID", "Party", "Opinion", "Year"), 
+                 skip = 1)
+data <- na.omit(data)
+
+by_year <- ddply(data, "Year", summarise, Op_Mean = mean(Opinion))
+by_year$yearsq <- by_year$Year*by_year$Year
+by_year
+g_by_year <- ggplot(by_year, aes(x = Year, y = Op_Mean)) +
+  geom_line(color = "navyblue")
+
+```
+```{r}
+g_by_year
+
+```
+
+The change over time from 1994 to 2016 about Americans' view on African Americans "working their way up" against predjudice is shown in the graph above. As can be seen, peoples opinions began to shift towards disagreement beginning around 2008.
+
+
+
+
+To begin analysis, I will examine a linear regression model with year as the linear term. 
+
+```{r}
+options(scipen = 999)
+
+lm_1 <- lm(Op_Mean ~ Year, by_year)
+summary(lm_1)
+```
+This model shows that with each passing year, public opinion over not providing favors for African Americans, dropped by -0.011 points per year. The adjusted R-squared for this model is .4247, which suggests we can explain almost 43% of the variation, which is quite high. This is only slightly statistically significant, and when examining the graph below, there appears to be a better model availible.
+
+```{r}
+smth_plot <- g_by_year+ stat_smooth(method = "lm", se = FALSE, color = "maroon",lty = 2)
+smth_plot
+```
+
+
+
+
+A first glance, a quadratic fit looks to be a closer representation. 
+```{r}
+quad_plot <- g_by_year+ stat_smooth(method = "lm", formula = y ~ poly(x, 2), se = FALSE, color = "maroon", lty = 2)
+quad_plot
+```
+
+```{r}
+lm_2 = lm(Op_Mean ~ Year + yearsq, by_year)
+summary(lm_2)
+```
+Looking at this model, we see that with each passing year, opinion about not helping African Americans work through predjudice drops by -0.0015 points per year. The adjusted R-Squared is  .7882, suggesting that the year explains almost 79% of the variation, and it is statistically significant. 
+
+
+
+
+
+In order to better understand driving forces behind this change, I decided to look at the data on the basis of political party. I recoded the "Party"  variable for 1 to be democrat, and 0 to be republican. 
+
+```{r}
+data$dem <- ifelse(data$Party < 3, 1, 0 )
+
+```
+
+Examining this graph, it is easy to see that there is strong growing divide between democrats and republicans on this subject. 
+
+```{r, include=FALSE}
+by_year_dem <- ddply(data, c("Year", "dem"), summarise, Op_mean = mean(Opinion))
+by_year_dem
+
+color_and_labels <- scale_color_manual(values = c("maroon", "navyblue"), 
+                                       labels = c("republican", "democrat"), 
+                                       name = "")
+
+g_party <- ggplot(by_year_dem, aes(x = Year, y = Op_mean, group = dem, 
+                                   color = factor(dem)))
+g_party <- g_party + geom_line()
+g_party + color_and_labels
+
+
+
+```
+
+
+
+For clarity sake, fitting a simple linear model over both trends shows that both partys are in fact moving away from strongly agreeing that African Americans shouldn't expect help in overcoming predjudice; however the republican line is only slightly decreasing, while the democrat line is steep in its decline. 
+
+```{r}
+g_party + color_and_labels + geom_smooth(method = lm, se = FALSE)
+```

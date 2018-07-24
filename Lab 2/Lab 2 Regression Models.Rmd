@@ -1,0 +1,100 @@
+---
+title: "Lab2_RM"
+author: "Nathan Colbert"
+date: "10/30/2017"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(plm)
+library(plyr)
+library(stargazer) 
+firstD <- function(var, group, df){
+  bad <- (missing(group) & !missing(df))
+  if (bad) stop("if df is specified then group must also be specified")
+  
+  fD <- function(j){ c(NA, diff(j)) }
+  
+  var.is.alone <- missing(group) & missing(df)
+  
+  if (var.is.alone) {
+    return(fD(var))
+  }
+  if (missing(df)){
+    V <- var
+    G <- group
+  }
+  else{
+    V <- df[, deparse(substitute(var))]
+    G <- df[, deparse(substitute(group))]
+  }
+  
+  G <- list(G)
+  D.var <- by(V, G, fD)
+  unlist(D.var)
+}
+
+```
+
+
+## A
+For this lab I am going to examine ones confidence in the scientific community as a function of their confidence in organized religion with their panel wave as a factor. 
+```{r}
+panel <- read.csv("Downloads/panel-for-R.csv")
+vars <- c("consci", "conclerg", "panelwave", "paeduc", "maeduc", "idnum")
+lab2 <- panel[, vars]
+lab2 <- ddply(lab2, "idnum", mutate, d.consci = firstD(consci), d.conclerg = firstD(conclerg))
+lab2$consci <- 4 - lab2$consci
+lab2$conclerg <- 4 - lab2$conclerg
+
+table(lab2$conclerg)
+table(lab2$consci)
+lm1 <- lm(consci ~ conclerg + as.factor(panelwave), lab2)
+summary(lm1)
+
+```
+Examining this linear model, we see that over time net of all other factors, confidence in the scientific community is decreasing by approximately .03 per panel wave, however these results are not statistically significant (or maybe barely so) and shouldnt be given very much clout. Interestingly enough, this model suggests that for every one unit increase in confidence in organinized religion, their is a corresponding increase of .06*** in their confidence in the scientific community which is highly statiscally significant. 
+
+## B
+```{r}
+con_fe <- plm(consci ~ conclerg + as.factor(panelwave), 
+              index = c("idnum", "panelwave"),
+              model = "within",
+              data = lab2)
+
+summary(con_fe)
+```
+However, when running a fixed effects model, the statisical significance of all three independent variables increases. This suggests that through holding constant things which we wouldnt percieve to change over time, we remove any confounding of these variables. The coefficient on conclerg doubled, simalarily the coefficients on panel wave grew by almost -.02 points. 
+
+## C
+In order to attempt to explain this relationship further, I am going to include mother and fathers education as variables. 
+```{r}
+con_fe2 <- plm(consci ~ conclerg + as.factor(panelwave) + maeduc + paeduc, 
+              index = c("idnum", "panelwave"),
+              model = "within",
+              data = lab2)
+
+summary(con_fe2)
+```
+Inclusion of mother and fathers education completely decimates the statistcal significance in confidence in organized religion as a predictor for confidence in the scientific community. This is 
+an interesting result. Not only is conclerg no longer statistically significant, but maeduc and paeduc are not statistically significant either. Looking at this fixed effect model with these added variables, it appears neither mother or fathers education, or respondents confidence in organized religion are statistically significant predictors of confidence in the scienctific community in either direction. However, net of all other factors, panel wave remains a statistically significant predictor of a decline in confidence in the scientific community across each panel by roughly -.06 points.
+
+## D
+```{r}
+con_re <-plm(consci ~ conclerg + as.factor(panelwave) + maeduc + paeduc, 
+              index = c("idnum", "panelwave"),
+              model = "random",
+              data = lab2)
+summary(con_re)
+```
+Looking at the random effects model, statistical significance returns to conclerg, and fathers education becomes highly statistically significant. Under the random effects model, a one category growth in a fathers education level leads to a .019*** increase in their confidence in the scientific community. To determine which model is more accurate, I will use a hausman test.
+
+## E
+```{r}
+phtest(con_fe2, con_re)
+```
+
+The p-value of .9241 is greater then .05, suggesting that we should use the random effects model. Our test suggests that our unique errors are not correlated with our predictors, and thus, a random effects model will be more appropriate. This also suggests that our fixed effects model was too stringent to provide and accurate understanding of the relationship. 

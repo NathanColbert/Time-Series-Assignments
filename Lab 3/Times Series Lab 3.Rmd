@@ -1,0 +1,284 @@
+---
+title: "Time Series Lab 3"
+author: "Nathan Colbert"
+date: "12/7/2017"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(plyr)
+library(car)
+library(lmtest)
+library(MASS)
+library(sandwich)
+library(fUnitRoots)
+library(lmtest)
+library(readr)
+library(corrplot)
+library(reshape2)
+library(forecast)
+
+
+ggMyTS <- function(df, varlist, line = TRUE, point = TRUE, pointsize = 3, linewidth = 1.25, ...){
+  require(ggplot2)
+  # varlist = character vector with names of variables to use
+  if(missing(varlist)){
+    gg <- ggplot(df, aes(time, value, colour = variable)) 
+  }
+  else{
+    include <- with(df, variable %in% varlist)
+    gg <- ggplot(df[include,], aes(time, value, colour = variable))   
+  }
+  if(line == FALSE & point == FALSE) {
+    stop("At least one of 'line' or 'point' must be TRUE") 
+  }
+  else{
+    if(line == TRUE) gg <- gg + geom_line(size = linewidth, aes(color = variable), ...)
+    if(point == TRUE) gg <- gg + geom_point(size = pointsize, aes(color = variable), ...)
+  }
+  
+  gg + xlab("") + theme(legend.position = "bottom") + scale_x_continuous(breaks = min(df$time):max(df$time))
+} 
+
+
+firstD <- function(var, group, df){
+  bad <- (missing(group) & !missing(df))
+  if (bad) stop("if df is specified then group must also be specified")
+  
+  fD <- function(j){ c(NA, diff(j)) }
+  
+  var.is.alone <- missing(group) & missing(df)
+  
+  if (var.is.alone) {
+    return(fD(var))
+  }
+  if (missing(df)){
+    V <- var
+    G <- group
+  }
+  else{
+    V <- df[, deparse(substitute(var))]
+    G <- df[, deparse(substitute(group))]
+  }
+  
+  G <- list(G)
+  D.var <- by(V, G, fD)
+  unlist(D.var)
+}
+
+meltMyTS <- function(mv.ts.object, time.var, keep.vars){
+  
+    require(reshape2)
+  
+  if(missing(keep.vars)) {
+    melt.dat <- data.frame(mv.ts.object)
+  }
+  else {
+    if (!(time.var %in% keep.vars)){
+      keep.vars <- c(keep.vars, time.var)
+    }
+    melt.dat <- data.frame(mv.ts.object)[, keep.vars]
+  }
+  melt.dat <- melt(melt.dat, id.vars = time.var)
+  colnames(melt.dat)[which(colnames(melt.dat) == time.var)] <- "time"
+  return(melt.dat)
+}
+```
+#1. Create a multivariate time series; perform any interpolations.  
+```{r, message=FALSE, warning=FALSE}
+trends_gss <- read_csv("/Users/nathancolbert/Downloads/trends-gss 3.csv")
+
+mark <- colSums(is.na(trends_gss) == 0)
+
+mark <- sapply(trends_gss, FUN = is.numeric)
+
+trends_gss <- trends_gss[, mark]
+
+vars <- c("year", "courts", "fair", "sex",
+          "age", "partyid", "degree", "realinc")
+sub <- trends_gss[, vars]
+
+sub <- mutate(sub, 
+              baplus = ifelse(degree >= 3, 1, 0),
+              courts = ifelse(courts == 2, 1, 0), 
+              optimism = ifelse(fair == 2, 1, 0),
+              income = realinc)
+
+by_year <- aggregate(subset(sub, sel = -year),
+                     list(year = sub$year), mean, na.rm = T)
+
+by_year[30:40, "year"] <- c(1979, 1981, 1992,
+                            1995, seq(1997, 2009, 2))
+
+by_year <- arrange(by_year, year)
+
+by_year_ts <- ts(by_year)
+
+by_year_ts <- na.approx(by_year_ts)
+
+by_year <- aggregate(subset(sub, sel = -year),
+                     list(year = sub$year), mean, na.rm = T)
+
+by_year_ts <- as.data.frame(by_year_ts)
+
+by_year_ts <- mutate(by_year_ts, 
+                     courts = courts*100,
+                     fair_pct = optimism*100,
+                     ba_pct = baplus*100)
+
+cor_vars <- c("fair_pct", "courts", "ba_pct",
+              "age", "income", "year")
+
+cor_data <- by_year_ts[, cor_vars]
+
+corrplot(cor(cor_data))
+```
+
+#2. Graph the relationships between X and Y.  Explain how you think Y should relate to your key Xs.
+
+I would assume those who believe people are generally fair would er on the side of the courts either punishing appropriately, or even too much. However, those who believe that it is the nature of others to take advantage of one another would likely find the court system too lax. I would assume both of these relationships would move in harmony across time and that an increase in belief that the courts should be more stringent would beget an increase in people who believe that others govern themselves selfishly. 
+```{r}
+keep_vars <- c("year", "fair_pct", "courts",
+               "age", "ba_pct", "income")
+
+plot_dat <- meltMyTS(mv.ts.object = by_year_ts, 
+                     time.var = "year", keep.vars = keep_vars)
+
+(g_trust <- ggMyTS(df = plot_dat, varlist = c("fair_pct")))
+
+(g_degreelt50_pct <- ggMyTS(df = plot_dat, varlist = c("ba_pct")))
+
+(g_degreelt50_pct <- ggMyTS(df = plot_dat, varlist = c("courts")))
+
+(g_degreelt50_pct <- ggMyTS(df = plot_dat, varlist = c("income")))
+
+(g_age <- ggMyTS(df = plot_dat, varlist = c("age")))
+```
+
+#3. Run a simple time series regression, with one X and no trend.  Interpret it.
+```{r}
+lm_courts <- lm(courts ~ fair_pct, data = by_year_ts)
+
+summary(lm_courts)
+
+e <- lm_courts$resid
+
+acf(e, xlim = c(1,8), col = "red", lwd = 2) 
+
+plot(e)
+
+dwtest(lm_courts) 
+
+bgtest(lm_courts) 
+
+durbinWatsonTest(lm_courts, max.lag=3) 
+```
+
+Each percent more people increase on their opinions towards fairness is a 1.3088%*** increase in their belief that courts are not strict enough. This is opposite of what I thought would happen in every way. Looking at the Durbin Watson Test and the Breusch-Godfrey Test, we definitely have autocorrelation in the errors. Including the year trend will potentially correct this. 
+
+#4. Run a time series regression with one X and trend.  Interpret it.  Perform autocorrelation diagnostics.  Explain what you found.
+```{r}
+lm_courts2 <- update(lm_courts, ~ . + year)
+
+summary(lm_courts2)
+
+e2 <- lm_courts2$resid
+
+acf(e2, xlim = c(1,8), col = "red", lwd = 2)
+
+pacf(e2, xlim = c(1,8), col = "red", lwd = 2)
+
+plot(e2)
+
+dwtest(lm_courts2)
+
+bgtest(lm_courts2)
+
+durbinWatsonTest(lm_courts2, max.lag=3)
+```
+
+Through including trend, this relationship all but disappears. Now, for every 1% increase in belief in fairness we see a .64% increase in belief that the courts should be more stringent. However, this is barely statistically significant. Furthermore, net of percenntage of change in belief in the fairness of others, with each passing year we are seeing a decrease by .3%* of peoples belief that courts should prosecute more harshly. However, we still have extremely correlated errors over multiple lags. 
+
+#5. Consider running a time series regression with many Xs and trend.  Interpret that. 
+```{r}
+options(scipen = 999)
+
+lm_courts3 <- update(lm_courts2, ~ . + age + ba_pct + income)
+
+summary(lm_courts3)
+
+durbinWatsonTest(lm_courts3, max.lag=2)
+
+e3 <- lm_courts3$residuals
+
+plot(e3)
+```
+
+Including more variables we see that, net of all other variables, the previously perceived relationship between belief in fairness and harsher courts continues its statistical significance has returned with a 1% increase in fairness leading to a .91** increase in desiring harsher court sentences. Another interesting outcome is that having a bachelors degree or more, net of all other variables, leads to a 1.5% increase in your belief in a more strict justice system. I suppose in one light this makes sense, although in general more education tends to lead to greater overall tolerance in other areas, and thus would suggest the opposite relationship than is seen here. Per usual, with age comes a 3.6% decrease in desiring stricter court systems which is statistcally significant. This is in line with most other ideologies that with aging one may begin to digress in stringent veiws. Yet again it appears we have autocorellation in the errors. The graph still shows a high corellation. 
+
+#6. Run a first differenced time series regression.  Interpret that.    
+```{r}
+by_yearFD <- summarise(data.frame(by_year_ts),
+                       courts = firstD(courts),
+                       age = firstD(age),
+                       fair_pct = firstD(fair_pct),
+                       ba_pct = firstD(ba_pct),
+                       income = firstD(income),
+                       year = year)
+
+lm_courts4 <- update(lm_courts3, data = by_yearFD)
+
+summary(lm_courts4)
+
+e4 <- lm_courts4$resid
+
+acf(e4, xlim = c(1,6), col = "red", lwd = 2)
+
+pacf(e4, xlim = c(1,6), col = "red", lwd = 2)
+
+durbinWatsonTest(lm_courts4, max.lag = 2)
+
+plot(e4)
+```
+
+Through examining the first difference model we see that a 1% positive change in percent greater than a bachelors, net of all other factors, leads to a .96%*** increase in belief that the courts should be more stringent that is highly statistically significant. Year and fair_pct remain almost the same although diminished, and age and income both switch signs and are not significant. This suggests the previous hypothesis about age is likely invalid in this case. Although we still have a bit of autocorellation, it has been reduced significantly, and the errors are begininning to disperse a bit.
+
+
+#7. Check your variables for unit roots.  Do some tests.  Interpret them.
+```{r}
+adfTest(by_year_ts[,"courts"], lags = 0, type="ct")
+
+adfTest(by_year_ts[,"courts"], lags = 4, type="ct")
+
+PP.test(by_year_ts[,"courts"],lshort=TRUE)
+```
+
+According to the augmented Dickey Fuller Test with 0 lags, we can accept the null of not having unit roots, but just barely. Examining the same test with 4 lags, we jump the barrier and due to a .6 p value, we may have a unit root.  However, the Phillips-Perron test suggests again that we may not have unit roots. 
+
+#8. Perform an Automatic ARIMA on the residuals from one of your earlier models.  Tell me what it says.
+
+```{r}
+auto.arima(e4, trace=TRUE)
+```
+
+According to auto ARIMA the best model is ARIMA (0, 0, 0) with zero mean. In other words, OLS is more than sufficient. 
+
+#9. Run an ARIMA that follows from Step 8.  Interpret that, too.
+```{r}
+
+xvars_fat <- by_year_ts[,c("courts", "year")]
+
+arima_000 <- arima(by_year_ts[,c("fair_pct")],
+                   order = c(0,0,0), xreg = xvars_fat)
+summary(arima_000)
+
+Box.test(resid(arima_000), lag = 20,
+         type = c("Ljung-Box"), fitdf = 0)
+
+```
+
+Net of time trend, a 1% increase in belief in inherently fair people leads to a .13% increase in belief in more severe courts. However, the Ljung-Box test suggests we do still have autocorellation in the errors. More to be done on this! 
